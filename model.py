@@ -132,7 +132,7 @@ class DCGAN(object):
         self.grad_complete_loss = tf.gradients(self.complete_loss, self.z)
 
     def train(self, config):
-        data = glob(os.path.join(config.dataset, "*.png"))
+        data = glob(config.dataset)
         #np.random.shuffle(data)
         assert(len(data) > 0)
 
@@ -183,7 +183,7 @@ Initializing a new one.
 """)
 
         for epoch in xrange(config.epoch):
-            data = glob(os.path.join(config.dataset, "*.png"))
+            data = glob(config.dataset)
             batch_idxs = min(len(data), config.train_size) // self.batch_size
 
             for idx in xrange(0, batch_idxs):
@@ -250,7 +250,6 @@ Initializing a new one.
         isLoaded = self.load(self.checkpoint_dir)
         assert(isLoaded)
 
-        # data = glob(os.path.join(config.dataset, "*.png"))
         nImgs = len(config.imgs)
 
         batch_idxs = int(np.ceil(nImgs/self.batch_size))
