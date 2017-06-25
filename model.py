@@ -7,6 +7,7 @@
 from __future__ import division
 import os
 import time
+import math
 from glob import glob
 import tensorflow as tf
 from six.moves import xrange
@@ -33,6 +34,9 @@ class DCGAN(object):
             dfc_dim: (optional) Dimension of discrim units for fully connected layer. [1024]
             c_dim: (optional) Dimension of image color. [3]
         """
+        # Currently, image size must be a (power of 2) and (8 or higher).
+        assert(image_size & (image_size - 1) == 0 and image_size >= 8)
+
         self.sess = sess
         self.is_crop = is_crop
         self.batch_size = batch_size
@@ -57,14 +61,12 @@ class DCGAN(object):
         self.c_dim = c_dim
 
         # batch normalization : deals with poor initialization helps gradient flow
-        self.d_bn1 = batch_norm(name='d_bn1')
-        self.d_bn2 = batch_norm(name='d_bn2')
-        self.d_bn3 = batch_norm(name='d_bn3')
+        self.d_bns = [
+            batch_norm(name='d_bn%d' % (i,)) for i in range(4)]
 
-        self.g_bn0 = batch_norm(name='g_bn0')
-        self.g_bn1 = batch_norm(name='g_bn1')
-        self.g_bn2 = batch_norm(name='g_bn2')
-        self.g_bn3 = batch_norm(name='g_bn3')
+        log_size = int(math.log(image_size) / math.log(2))
+        self.g_bns = [
+            batch_norm(name='g_bn%d' % (i,)) for i in range(log_size)]
 
         self.checkpoint_dir = checkpoint_dir
         self.build_model()
@@ -131,9 +133,10 @@ class DCGAN(object):
         self.complete_loss = self.contextual_loss + self.lam*self.perceptual_loss
         self.grad_complete_loss = tf.gradients(self.complete_loss, self.z)
 
+
     def train(self, config):
         data = glob(config.dataset)
-        #np.random.shuffle(data)
+        np.random.shuffle(data)
         assert(len(data) > 0)
 
         d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
@@ -153,6 +156,7 @@ class DCGAN(object):
 
         sample_z = np.random.uniform(-1, 1, size=(self.sample_size , self.z_dim))
         sample_files = data[0:self.sample_size]
+
         sample = [get_image(sample_file, self.image_size, is_crop=self.is_crop) for sample_file in sample_files]
         sample_images = np.array(sample).astype(np.float32)
 
@@ -389,14 +393,14 @@ Initializing a new one.
     def discriminator(self, image, reuse=False):
         with tf.variable_scope("discriminator") as scope:
             if reuse:
-                #tf.get_variable_scope().reuse_variables()
                 scope.reuse_variables()
 
+            # TODO: Investigate how to parameterise discriminator based off image size.
             h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv'))
-            h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim*2, name='d_h1_conv'), self.is_training))
-            h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim*4, name='d_h2_conv'), self.is_training))
-            h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim*8, name='d_h3_conv'), self.is_training))
-            h4 = linear(tf.reshape(h3, [-1, 8192]), 1, 'd_h3_lin')
+            h1 = lrelu(self.d_bns[0](conv2d(h0, self.df_dim*2, name='d_h1_conv'), self.is_training))
+            h2 = lrelu(self.d_bns[1](conv2d(h1, self.df_dim*4, name='d_h2_conv'), self.is_training))
+            h3 = lrelu(self.d_bns[2](conv2d(h2, self.df_dim*8, name='d_h3_conv'), self.is_training))
+            h4 = linear(tf.reshape(h3, [-1, 8192]), 1, 'd_h4_lin')
     
             return tf.nn.sigmoid(h4), h4
 
@@ -404,25 +408,32 @@ Initializing a new one.
         with tf.variable_scope("generator") as scope:
             self.z_, self.h0_w, self.h0_b = linear(z, self.gf_dim*8*4*4, 'g_h0_lin', with_w=True)
     
-            self.h0 = tf.reshape(self.z_, [-1, 4, 4, self.gf_dim * 8])
-            h0 = tf.nn.relu(self.g_bn0(self.h0, self.is_training))
+            # TODO: Nicer iteration pattern here. #readability
+            hs = [None]
+            hs[0] = tf.reshape(self.z_, [-1, 4, 4, self.gf_dim * 8])
+            hs[0] = tf.nn.relu(self.g_bns[0](hs[0], self.is_training))
+
+            i = 1 # Iteration number.
+            depth_mul = 8  # Depth decreases as spatial component increases.
+            size = 8  # Size increases as depth decreases.
+
+            while size < self.image_size:
+                hs.append(None)
+                name = 'g_h%d' % (i,)
+                hs[i], _, _ = conv2d_transpose(hs[i-1],
+                    [self.batch_size, size, size, self.gf_dim*depth_mul], name=name, with_w=True)
+                hs[i] = tf.nn.relu(self.g_bns[i](hs[i], self.is_training))
+
+                i += 1
+                depth_mul //= 2
+                size *= 2
+
+            hs.append(None)
+            name = 'g_h%d' % (i,)
+            hs[i], _, _ = conv2d_transpose(hs[i - 1],
+                [self.batch_size, size, size, 3], name=name, with_w=True)
     
-            self.h1, self.h1_w, self.h1_b = conv2d_transpose(h0,
-                [self.batch_size, 8, 8, self.gf_dim*4], name='g_h1', with_w=True)
-            h1 = tf.nn.relu(self.g_bn1(self.h1, self.is_training))
-    
-            h2, self.h2_w, self.h2_b = conv2d_transpose(h1,
-                [self.batch_size, 16, 16, self.gf_dim*2], name='g_h2', with_w=True)
-            h2 = tf.nn.relu(self.g_bn2(h2, self.is_training))
-    
-            h3, self.h3_w, self.h3_b = conv2d_transpose(h2,
-                [self.batch_size, 32, 32, self.gf_dim*1], name='g_h3', with_w=True)
-            h3 = tf.nn.relu(self.g_bn3(h3, self.is_training))
-    
-            h4, self.h4_w, self.h4_b = conv2d_transpose(h3,
-                [self.batch_size, 64, 64, 3], name='g_h4', with_w=True)
-    
-            return tf.nn.tanh(h4)
+            return tf.nn.tanh(hs[i])
 
     def save(self, checkpoint_dir, step):
         if not os.path.exists(checkpoint_dir):
