@@ -233,9 +233,14 @@ Initializing a new one.
 
 
     def complete(self, config):
-        os.makedirs(os.path.join(config.outDir, 'hats_imgs'), exist_ok=True)
-        os.makedirs(os.path.join(config.outDir, 'completed'), exist_ok=True)
-        os.makedirs(os.path.join(config.outDir, 'logs'), exist_ok=True)
+        def make_dir(name):
+            # Works on python 2.7, where exist_ok arg to makedirs isn't available.
+            p = os.path.join(config.outDir, name)
+            if not os.path.exists(p):
+                os.makedirs(p)
+        make_dir('hats_imgs')
+        make_dir('completed')
+        make_dir('logs')
 
         try:
             tf.global_variables_initializer().run()
