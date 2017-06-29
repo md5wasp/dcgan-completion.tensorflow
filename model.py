@@ -8,12 +8,21 @@ from __future__ import division
 import os
 import time
 import math
+import itertools
 from glob import glob
 import tensorflow as tf
 from six.moves import xrange
 
 from ops import *
 from utils import *
+
+SUPPORTED_EXTENSIONS = ["png", "jpg", "jpeg"]
+
+def dataset_files(root):
+    """Returns a list of all image files in the given directory"""
+    data = itertools.chain.from_iterable(
+        glob(os.path.join(root, "*.{}".format(ext))) for ext in SUPPORTED_EXTENSIONS)
+
 
 class DCGAN(object):
     def __init__(self, sess, image_size=64, is_crop=False,
@@ -62,11 +71,11 @@ class DCGAN(object):
 
         # batch normalization : deals with poor initialization helps gradient flow
         self.d_bns = [
-            batch_norm(name='d_bn%d' % (i,)) for i in range(4)]
+            batch_norm(name='d_bn{}'.format(i,)) for i in range(4)]
 
         log_size = int(math.log(image_size) / math.log(2))
         self.g_bns = [
-            batch_norm(name='g_bn%d' % (i,)) for i in range(log_size)]
+            batch_norm(name='g_bn{}'.format(i,)) for i in range(log_size)]
 
         self.checkpoint_dir = checkpoint_dir
         self.build_model()
@@ -133,9 +142,8 @@ class DCGAN(object):
         self.complete_loss = self.contextual_loss + self.lam*self.perceptual_loss
         self.grad_complete_loss = tf.gradients(self.complete_loss, self.z)
 
-
     def train(self, config):
-        data = glob(config.dataset)
+        data = dataset_files(config.dataset)
         np.random.shuffle(data)
         assert(len(data) > 0)
 
@@ -187,7 +195,7 @@ Initializing a new one.
 """)
 
         for epoch in xrange(config.epoch):
-            data = glob(config.dataset)
+            data = dataset_files(config.dataset)
             batch_idxs = min(len(data), config.train_size) // self.batch_size
 
             for idx in xrange(0, batch_idxs):
@@ -219,9 +227,8 @@ Initializing a new one.
                 errG = self.g_loss.eval({self.z: batch_z, self.is_training: False})
 
                 counter += 1
-                print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
-                    % (epoch, idx, batch_idxs,
-                        time.time() - start_time, errD_fake+errD_real, errG))
+                print("Epoch: [{:2d}] [{:4d}/{:4d}] time: {:4.4f}, d_loss: {:.8f}, g_loss: {:.8f}".format(
+                    epoch, idx, batch_idxs, time.time() - start_time, errD_fake+errD_real, errG))
 
                 if np.mod(counter, 100) == 1:
                     samples, d_loss, g_loss = self.sess.run(
@@ -230,7 +237,7 @@ Initializing a new one.
                     )
                     save_images(samples, [8, 8],
                                 './samples/train_{:02d}_{:04d}.png'.format(epoch, idx))
-                    print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss))
+                    print("[Sample] d_loss: {:.8f}, g_loss: {:.8f}".format(d_loss, g_loss))
 
                 if np.mod(counter, 500) == 2:
                     self.save(config.checkpoint_dir, counter)
@@ -419,7 +426,7 @@ Initializing a new one.
 
             while size < self.image_size:
                 hs.append(None)
-                name = 'g_h%d' % (i,)
+                name = 'g_h{}'.format(i)
                 hs[i], _, _ = conv2d_transpose(hs[i-1],
                     [self.batch_size, size, size, self.gf_dim*depth_mul], name=name, with_w=True)
                 hs[i] = tf.nn.relu(self.g_bns[i](hs[i], self.is_training))
@@ -429,7 +436,7 @@ Initializing a new one.
                 size *= 2
 
             hs.append(None)
-            name = 'g_h%d' % (i,)
+            name = 'g_h{}'.format(i)
             hs[i], _, _ = conv2d_transpose(hs[i - 1],
                 [self.batch_size, size, size, 3], name=name, with_w=True)
     
